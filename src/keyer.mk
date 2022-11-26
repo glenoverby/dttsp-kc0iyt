@@ -8,6 +8,9 @@ iambic-keyer:	iambic-keyer.o
 keyboard-keyer:	keyboard-keyer.o
 	$(CC) -o keyboard-keyer keyboard-keyer.o $(LIBS)
 
+beacon-keyer:	beacon-keyer.o
+	$(CC) -o beacon-keyer beacon-keyer.o $(LIBS)
+
 install:	iambic-keyer keyboard-keyer
 	mv iambic-keyer keyboard-keyer ../bin
 
