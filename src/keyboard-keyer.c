@@ -58,6 +58,8 @@ jack_nframes_t size;
 
 BOOLEAN playing = FALSE;
 double wpm = 18.0, freq = 750.0, gain = -6.0, ramp = 5.0;
+char *text = NULL;
+char *connectleft = NULL, *connectright = NULL;
 
 COMPLEX *zout = 0;
 
@@ -118,6 +120,18 @@ get_morse(int c) {
 *
 */
 /* ---------------------------------------------------------------------------- */
+char getch() {
+  int c;
+  if (text != NULL) {
+                c = *text;
+                text++;
+                if (c == '\0')
+                        c = EOF;
+        } else {
+                c = getchar();
+  }
+  return c;
+}
 void
 reader_thread(void) {
   BOOLEAN b = TRUE; // we're coming from silence
@@ -125,16 +139,16 @@ reader_thread(void) {
   char *m;
   
   // keep reading 1 char at a time
-  while ((c = getchar()) != EOF) {
-    
+  //while ((c = getchar()) != EOF) {
+  while ((c = getch()) != EOF) {
     // inline command?
     if (c == ESC_L) {
       int i = 0;
       char buf[MAX_ESC];
       while ((c = getchar()) != EOF) {
-	if (c == ESC_R) break;
-	buf[i] = c;
-	if (++i >= (MAX_ESC - 1)) break;
+        if (c == ESC_R) break;
+        buf[i] = c;
+        if (++i >= (MAX_ESC - 1)) break;
       }
       if (c == EOF) goto finish;
       buf[i] = 0;
@@ -149,30 +163,30 @@ reader_thread(void) {
       /// for each element in morse string
       // (dit/dah, doesn't matter)
       while (e = *m++) {
-	// first segment is ramp up...
-	sem_wait(&reader);
-	morsel.type = ME_RAMP, morsel.size = risesize;
-	morsel.curr = 0.0, morsel.incr = riseincr;
-	sem_post(&writer);
-	
-	// ...then steady state...
-	// (choose dit/dah here)
-	sem_wait(&reader);
-	morsel.type = ME_STDY;
-	morsel.size = e == '.' ? ditstdysize : dahstdysize;
-	sem_post(&writer);
-	
-	// ...then ramp down...
-	sem_wait(&reader);
-	morsel.type = ME_RAMP, morsel.size = fallsize;
-	morsel.curr = 1.0, morsel.incr = fallincr;
-	sem_post(&writer);
-	
-	// ...finally, post-element pause
-	sem_wait(&reader);
-	morsel.type = ME_ZERO;
-	morsel.size = ditspacesize;
-	sem_post(&writer);
+        // first segment is ramp up...
+        sem_wait(&reader);
+        morsel.type = ME_RAMP, morsel.size = risesize;
+        morsel.curr = 0.0, morsel.incr = riseincr;
+        sem_post(&writer);
+        
+        // ...then steady state...
+        // (choose dit/dah here)
+        sem_wait(&reader);
+        morsel.type = ME_STDY;
+        morsel.size = e == '.' ? ditstdysize : dahstdysize;
+        sem_post(&writer);
+        
+        // ...then ramp down...
+        sem_wait(&reader);
+        morsel.type = ME_RAMP, morsel.size = fallsize;
+        morsel.curr = 1.0, morsel.incr = fallincr;
+        sem_post(&writer);
+        
+        // ...finally, post-element pause
+        sem_wait(&reader);
+        morsel.type = ME_ZERO;
+        morsel.size = ditspacesize;
+        sem_post(&writer);
       }
       
       // post-character pause
@@ -192,11 +206,11 @@ reader_thread(void) {
       morsel.type = ME_ZERO;
       ///  was previous output also interword space?
       if (b)
-	// yes, use full duration
-	morsel.size = wordspacesize;
+        // yes, use full duration
+        morsel.size = wordspacesize;
       else
-	// no, part of duration already played
-	morsel.size = wordspacesize - charspacesize;
+        // no, part of duration already played
+        morsel.size = wordspacesize - charspacesize;
       b = TRUE;
       sem_post(&writer);
     }
@@ -239,7 +253,7 @@ sound_thread(void) {
       ofreq = freq * 2.0 * M_PI / SAMP_RATE;
       scale = pow(10.0, gain / 20.0);
       if (phase > HUGE_PHASE)
-	phase -= HUGE_PHASE;
+        phase -= HUGE_PHASE;
       z = Cmplx(cos(phase), sin(phase));
       delta_z = Cmplx(cos(ofreq), sin(ofreq));
     }
@@ -249,34 +263,34 @@ sound_thread(void) {
 
       // make silence
       if (morsel.type == ME_ZERO)
-	zout[k] = cxzero;
+        zout[k] = cxzero;
       
       // make tone
       else {
-	z = Cmul(z, delta_z);
-	phase += ofreq;
-	// is this a ramping segment?
-	if (morsel.type == ME_RAMP) {
-	  morsel.curr += morsel.incr;
-	  zout[k] = Cscl(z, scale * sin(morsel.curr * M_PI / 2.0));
-	} else
-	  zout[k] = Cscl(z, scale);
+        z = Cmul(z, delta_z);
+        phase += ofreq;
+        // is this a ramping segment?
+        if (morsel.type == ME_RAMP) {
+          morsel.curr += morsel.incr;
+          zout[k] = Cscl(z, scale * sin(morsel.curr * M_PI / 2.0));
+        } else
+          zout[k] = Cscl(z, scale);
       }
 
       // have we played enough to fill a jack buffer?
       if (++k >= size) {
-	// yes, send to output
-	send_sound(zout, k);
-	// wait until some audio has been drained
-	sem_wait(&ready);
-	k = 0;
-	if (morsel.type != ME_ZERO) {
-	  // reset CORDIC
-	  if (phase > HUGE_PHASE)
-	    phase -= HUGE_PHASE;
-	  z = Cmplx(cos(phase), sin(phase));
-	  delta_z = Cmplx(cos(ofreq), sin(ofreq));
-	}
+        // yes, send to output
+        send_sound(zout, k);
+        // wait until some audio has been drained
+        sem_wait(&ready);
+        k = 0;
+        if (morsel.type != ME_ZERO) {
+          // reset CORDIC
+          if (phase > HUGE_PHASE)
+            phase -= HUGE_PHASE;
+          z = Cmplx(cos(phase), sin(phase));
+          delta_z = Cmplx(cos(ofreq), sin(ofreq));
+        }
       }
     }
   }
@@ -375,7 +389,7 @@ jack_shutdown(void *arg) {}
 * @return void
 */
 /* ---------------------------------------------------------------------------- */
-PRIVATE void
+PRIVATE int
 jack_callback(jack_nframes_t nframes, void *arg) {
   char *lp, *rp;
   int nwant = nframes * sizeof(float),
@@ -391,6 +405,7 @@ jack_callback(jack_nframes_t nframes, void *arg) {
     memset(lp, 0, nwant);
     memset(rp, 0, nwant);
   }
+  return 0;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -441,20 +456,29 @@ main(int argc, char **argv) {
     if (argv[i][0] == '-')
       switch (argv[i][1]) {
       case 'f':
-	freq = atof(argv[++i]);
-	break;
+        freq = atof(argv[++i]);
+        break;
       case 'w':
-	wpm = atof(argv[++i]);
-	break;
+        wpm = atof(argv[++i]);
+        break;
       case 'g':
-	gain = atof(argv[++i]);
-	break;
+        gain = atof(argv[++i]);
+        break;
       case 'r':
-	ramp = atof(argv[++i]);
-	break;
+        ramp = atof(argv[++i]);
+        break;
+      case 't':
+        text = argv[++i];
+        break;
+      case 'c':
+        connectleft = argv[++i];
+        break;
+      case 'C':
+        connectright = argv[++i];
+        break;
       default:
-	fprintf(stderr, "keyboard-keyer [-w wpm] [-f freq] [-g gain_dB] [-r ramp_ms] [infile]\n");
-	exit(1);
+        fprintf(stderr, "keyboard-keyer [-w wpm] [-f freq] [-g gain_dB] [-r ramp_ms] [infile]\n");
+        exit(1);
       }
     else break;
 
@@ -470,7 +494,7 @@ main(int argc, char **argv) {
 
   //------------------------------------------------------------
 
-  if (!(client = jack_client_new("kkyr")))
+  if (!(client = jack_client_open("kkyr", JackNullOption, NULL)))
     fprintf(stderr, "can't make client -- jack not running?\n"), exit(1);
   jack_set_process_callback(client, (void *) jack_callback, 0);
   jack_on_shutdown(client, (void *) jack_shutdown, 0);
@@ -478,15 +502,15 @@ main(int argc, char **argv) {
   size = jack_get_buffer_size(client);
 
   lport = jack_port_register(client,
-			     "ol",
-			     JACK_DEFAULT_AUDIO_TYPE,
-			     JackPortIsOutput,
-			     0);
+                             "ol",
+                             JACK_DEFAULT_AUDIO_TYPE,
+                             JackPortIsOutput,
+                             0);
   rport = jack_port_register(client,
-			     "or",
-			     JACK_DEFAULT_AUDIO_TYPE,
-			     JackPortIsOutput,
-			     0);
+                             "or",
+                             JACK_DEFAULT_AUDIO_TYPE,
+                             JackPortIsOutput,
+                             0);
   lring = jack_ringbuffer_create(RING_SIZE);
   rring = jack_ringbuffer_create(RING_SIZE);
   jack_ringbuffer_clear(lring, size * sizeof(float));
@@ -513,14 +537,26 @@ main(int argc, char **argv) {
       fprintf(stderr, "can't find any physical playback ports\n");
       exit(1);
     }
-    if (jack_connect(client, jack_port_name(lport), ports[0])) {
-      fprintf(stderr, "can't connect left output\n");
-      exit(1);
-    }
-    if (jack_connect(client, jack_port_name(rport), ports[1])) {
-      fprintf(stderr, "can't connect right output\n");
-      exit(1);
-    }
+		if (connectleft != NULL) {
+			if (jack_connect(client, jack_port_name(lport), connectleft)) {
+				fprintf(stderr, "can't connect left output\n");
+			}
+		} else {
+			if (jack_connect(client, jack_port_name(lport), ports[0])) {
+				fprintf(stderr, "can't connect left output\n");
+				exit(1);
+			}
+		}
+		if (connectright != NULL) {
+			if (jack_connect(client, jack_port_name(rport), connectright)) {
+				fprintf(stderr, "can't connect right output\n");
+			}
+		} else {
+			if (jack_connect(client, jack_port_name(rport), ports[1])) {
+				fprintf(stderr, "can't connect right output\n");
+				exit(1);
+			}
+		}
     free(ports);
   }
 
@@ -555,17 +591,17 @@ char *morse_table[128] = {
   /* 024 CAN */ 0, /* 025  EM */ 0, /* 026 SUB */ 0, /* 027 ESC */ 0,
   /* 028  FS */ 0, /* 029  GS */ 0, /* 030  RS */ 0, /* 031  US */ 0,
   /* 032  SP */ 0,
-  /* 033   ! */ "...-.",	// [SN]
+  /* 033   ! */ "...-.",        // [SN]
   /* 034   " */ 0,
   /* 035   # */ 0,
   /* 036   $ */ 0,
-  /* 037   % */ ".-...",	// [AS]
+  /* 037   % */ ".-...",        // [AS]
   /* 038   & */ 0,
   /* 039   ' */ 0,
-  /* 040   ( */ "-.--.",	// [KN]
+  /* 040   ( */ "-.--.",        // [KN]
   /* 041   ) */ 0,
-  /* 042   * */ "...-.-",	// [SK]
-  /* 043   + */ ".-.-.",	// [AR]
+  /* 042   * */ "...-.-",       // [SK]
+  /* 043   + */ ".-.-.",        // [AR]
   /* 044   , */ "--..--",
   /* 045   - */ "-....-",
   /* 046   . */ ".-.-.-",
@@ -583,9 +619,9 @@ char *morse_table[128] = {
   /* 058   : */ 0,
   /* 059   ; */ 0,
   /* 060   < */ 0,
-  /* 061   = */ "-...-",	// [BT]
+  /* 061   = */ "-...-",        // [BT]
   /* 062   > */ 0,
-  /* 063   ? */ "..__..",	// [IMI]
+  /* 063   ? */ "..__..",       // [IMI]
   /* 064   @ */ ".--.-.",
   /* 065   A */ ".-",
   /* 066   B */ "-...",
